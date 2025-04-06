@@ -1,13 +1,14 @@
 import asyncio
 import json
 import websockets
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCIceCandidate
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCIceCandidate ,RTCIceServer ,RTCConfiguration
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import AudioFrame
 import pyaudio
 import struct
 
 import struct
+SIGNALING_SERVER = "ws://104.155.143.57:8888"
 
 def parse_pixel_streaming_event(data: bytes):
     """Parses a Pixel Streaming RTCDataChannel event based on Epic Games Pixel Streaming DataChannel definitions."""
@@ -91,7 +92,6 @@ def parse_pixel_streaming_event(data: bytes):
 
 
 # 連接至 Unreal Engine Pixel Streaming Signaling Server
-SIGNALING_SERVER = "ws://127.0.0.1:8888"
 peer_connection_options = None  # 儲存 peerConnectionOptions 設定
 relay = MediaRelay()
 peer_connections = {}  # 以 playerId 為 Key 存儲 WebRTC 連線
@@ -134,12 +134,11 @@ video_source = MediaPlayer("/dev/video0")  # 攝影機來源 (Linux)
 audio_track = AudioStreamTrack()  # 自訂音訊 track
 video_track = VideoStreamTrack(video_source)
 # 用來 **傳輸** 影片流的 track
-async def create_offer(player_id, ws):
+async def create_offer(player_id, ws,pc):
     global peer_connections, data_channels
 
-    pc = RTCPeerConnection()
-    peer_connections[player_id] = pc  # 儲存 WebRTC 連線
 
+    peer_connections[player_id] = pc  # 儲存 WebRTC 連線
 
 
     pc.addTrack(video_track)
@@ -221,7 +220,21 @@ async def create_offer(player_id, ws):
 
 def channel_log(channel, t, message):
     print("channel(%s) %s %s" % (channel.label, t, message))
+def parse_ice_servers(raw_config):
+    ice_servers = []
+    for server in raw_config.get("iceServers", []):
+        urls = server.get("urls")
+        username = server.get("username")
+        credential = server.get("credential")
 
+        # aiortc 支援 urls 是 list 或 str
+        ice_server = RTCIceServer(
+            urls=urls,
+            username=username,
+            credential=credential
+        )
+        ice_servers.append(ice_server)
+    return RTCConfiguration(iceServers=ice_servers)
 # 處理 Signaling 交換
 async def signaling():
     global peer_connection_options
@@ -236,6 +249,8 @@ async def signaling():
 
             if data.get("type") == "config":
                 peer_connection_options = data.get("peerConnectionOptions", {})
+                rtc_config = parse_ice_servers(peer_connection_options)
+                pc = RTCPeerConnection(configuration=rtc_config)
                 print(f"📝 儲存 peerConnectionOptions: {json.dumps(peer_connection_options, indent=2)}")
 
             elif data.get("type") == "identify":
@@ -246,7 +261,7 @@ async def signaling():
             elif data.get("type") == "playerConnected":
                 player_id = data["playerId"]
                 print(f"🎮 玩家 {player_id} 已連接，建立 WebRTC 連線...")
-                await create_offer(player_id, ws)
+                await create_offer(player_id, ws,pc)
 
             elif data.get("type") == "answer":
                 player_id = data["playerId"]
