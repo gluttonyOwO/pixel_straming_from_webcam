@@ -8,7 +8,7 @@ import pyaudio
 import struct
 
 import struct
-SIGNALING_SERVER = "ws://104.155.143.57:8888"
+SIGNALING_SERVER = "ws://34.71.126.162:8888"
 
 def parse_pixel_streaming_event(data: bytes):
     """Parses a Pixel Streaming RTCDataChannel event based on Epic Games Pixel Streaming DataChannel definitions."""
@@ -101,7 +101,7 @@ FORMAT = pyaudio.paInt16  # s16 (16-bit PCM)
 CHANNELS = 1  # 單聲道
 SAMPLE_RATE = 8000  # 取樣率
 CHUNK = 1024  # 每個音頻幀的大小
-
+rtc_config = RTCConfiguration()
 
 p = pyaudio.PyAudio()
 stream = p.open(format=FORMAT, channels=CHANNELS, rate=SAMPLE_RATE, input=True, frames_per_buffer=CHUNK)
@@ -250,7 +250,6 @@ async def signaling():
             if data.get("type") == "config":
                 peer_connection_options = data.get("peerConnectionOptions", {})
                 rtc_config = parse_ice_servers(peer_connection_options)
-                pc = RTCPeerConnection(configuration=rtc_config)
                 print(f"📝 儲存 peerConnectionOptions: {json.dumps(peer_connection_options, indent=2)}")
 
             elif data.get("type") == "identify":
@@ -261,6 +260,7 @@ async def signaling():
             elif data.get("type") == "playerConnected":
                 player_id = data["playerId"]
                 print(f"🎮 玩家 {player_id} 已連接，建立 WebRTC 連線...")
+                pc = RTCPeerConnection(configuration=rtc_config)
                 await create_offer(player_id, ws,pc)
 
             elif data.get("type") == "answer":
