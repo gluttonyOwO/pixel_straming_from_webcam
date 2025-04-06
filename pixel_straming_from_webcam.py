@@ -8,7 +8,7 @@ import pyaudio
 import struct
 
 import struct
-SIGNALING_SERVER = "ws://34.71.126.162:8888"
+SIGNALING_SERVER = "ws://127.0.0.1:8888"
 
 def parse_pixel_streaming_event(data: bytes):
     """Parses a Pixel Streaming RTCDataChannel event based on Epic Games Pixel Streaming DataChannel definitions."""

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>WebRTC Streamer (Send webcam)</title>
+  <style>
+    body { background: #111; color: #0f0; font-family: monospace; margin: 0; }
+	video {
+	  width: 50vw;
+	  height: 70vh;
+	  background: #222;
+	  display: inline-block;
+	}
+
+    #log { height: 30vh; overflow-y: auto; padding: 10px; background: #000; }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <video id="remoteVideo" autoplay playsinline></video>       <!-- 對方傳來的影像 -->
+  <div id="log"></div>
+
+  <script>
+    const video = document.getElementById("video");
+    const logDiv = document.getElementById("log");
+const remoteVideo = document.getElementById("remoteVideo");
+    function log(msg) {
+      const el = document.createElement("div");
+      el.textContent = msg;
+      logDiv.appendChild(el);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    let pc = null;
+    let dataChannel = null;
+    let localStream = null;
+
+    const SIGNALING_URL = "ws://127.0.0.1:8888";
+    const ws = new WebSocket(SIGNALING_URL);
+
+    ws.onopen = () => {
+      log("✅ Connected to signaling server");
+    };
+
+    ws.onerror = (e) => {
+      log("❌ WebSocket error");
+    };
+
+    ws.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+      console.log("📩 Received signaling:", msg);
+
+      if (msg.type === "identify") {
+        ws.send(JSON.stringify({ type: "endpointId", id: "WebJSStreamer" }));
+        log("📤 Sent endpointId");
+      }
+
+      if (msg.type === "playerConnected") {
+        log("🎮 Player connected, building offer...");
+        await createPeerConnection(msg.playerId);
+      }
+
+      if (msg.type === "answer") {
+        await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: msg.sdp }));
+        log("✅ Set remote SDP answer");
+      }
+
+      if (msg.type === "iceCandidate") {
+        await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        log("❄️ Added ICE candidate");
+      }
+    };
+    
+function parsePixelStreamingEvent(buffer) {
+  const dv = new DataView(buffer);
+  const eventId = dv.getUint8(0);
+
+  try {
+    switch (eventId) {
+      case 0: return { event: "IFrameRequest" };
+      case 1: return { event: "RequestQualityControl" };
+      case 60: return {
+        event: "KeyDown",
+        keycode: dv.getUint8(1),
+        is_repeat: dv.getUint8(2)
+      };
+      case 61: return {
+        event: "KeyUp",
+        keycode: dv.getUint8(1)
+      };
+      case 62: return {
+        event: "KeyPress",
+        charcode: dv.getUint16(1, true)
+      };
+      case 70: return { event: "MouseEnter" };
+      case 71: return { event: "MouseLeave" };
+      case 72: return {
+        event: "MouseDown",
+        button: dv.getUint8(1),
+        x: dv.getUint16(2, true),
+        y: dv.getUint16(4, true)
+      };
+      case 73: return {
+        event: "MouseUp",
+        button: dv.getUint8(1),
+        x: dv.getUint16(2, true),
+        y: dv.getUint16(4, true)
+      };
+      case 74: return {
+        event: "MouseMove",
+        x: dv.getUint16(1, true),
+        y: dv.getUint16(3, true),
+        delta_x: dv.getInt16(5, true),
+        delta_y: dv.getInt16(7, true)
+      };
+      case 75: return {
+        event: "MouseWheel",
+        delta: dv.getInt16(1, true),
+        x: dv.getUint16(3, true),
+        y: dv.getUint16(5, true)
+      };
+      case 80:
+      case 81:
+      case 82: {
+        const type = ["TouchStart", "TouchEnd", "TouchMove"][eventId - 80];
+        return {
+          event: type,
+          num_touches: dv.getUint8(1),
+          x: dv.getUint16(2, true),
+          y: dv.getUint16(4, true),
+          idx: dv.getUint8(6),
+          force: dv.getUint8(7),
+          valid: dv.getUint8(8)
+        };
+      }
+      case 90:
+      case 91: {
+        const type = eventId === 90 ? "GamepadButtonPressed" : "GamepadButtonReleased";
+        return {
+          event: type,
+          controller_id: dv.getUint8(1),
+          button: dv.getUint8(2),
+          is_repeat: dv.getUint8(3)
+        };
+      }
+      case 92: {
+        return {
+          event: "GamepadAnalog",
+          controller_id: dv.getUint8(1),
+          button: dv.getUint8(2),
+          analog_value: dv.getFloat64(3, true)
+        };
+      }
+      case 94: {
+        return {
+          event: "GamepadDisconnected",
+          controller_id: dv.getUint8(1)
+        };
+      }
+      default:
+        return {
+          event: "Unknown",
+          eventId,
+          raw: Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, "0")).join(" ")
+        };
+    }
+  } catch (err) {
+    return {
+      event: "Error",
+      error: err.toString(),
+      eventId,
+      raw: Array.from(new Uint8Array(buffer))
+    };
+  }
+}
+	pc.ontrack = (event) => {
+	  log("📺 Remote stream track received");
+
+
+	  remoteVideo.srcObject = event.streams[0];
+	};
+    async function createPeerConnection(playerId) {
+      pc = new RTCPeerConnection();
+
+      // 加上 local webcam / mic track
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+      dataChannel = pc.createDataChannel("cirrus");
+      dataChannel.onopen = () => log("📡 DataChannel 'cirrus' open");
+	dataChannel.onmessage = async (e) => {
+	  let arrayBuffer;
+
+	  // 處理 blob → arrayBuffer
+	  if (e.data instanceof Blob) {
+	    arrayBuffer = await e.data.arrayBuffer();
+	  } else if (e.data instanceof ArrayBuffer) {
+	    arrayBuffer = e.data;
+	  } else {
+	    log("❓ Unknown message type");
+	    return;
+	  }
+
+	  const parsed = parsePixelStreamingEvent(arrayBuffer);
+	  log("📥 Parsed: " + JSON.stringify(parsed));
+	};
+
+
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          ws.send(JSON.stringify({
+            type: "iceCandidate",
+            playerId,
+            candidate: event.candidate
+          }));
+        } else {
+          ws.send(JSON.stringify({ type: "iceCandidateComplete", playerId }));
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: "offer", playerId, sdp: offer.sdp }));
+      log("📤 Sent offer to player");
+    }
+
+    // 外部呼叫 startMedia，只做 media 啟動
+    async function startMedia() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        video.srcObject = localStream;
+        log("🎥 Media stream ready");
+      } catch (err) {
+        log("❌ Failed to get media: " + err);
+      }
+    }
+
+    // 自動開始媒體（或用按鈕手動也可以）
+    startMedia();
+  </script>
+</body>
+</html>
+
